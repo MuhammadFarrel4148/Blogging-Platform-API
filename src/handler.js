@@ -1,5 +1,11 @@
 const { nanoid } = require('nanoid');
-const db = require('./database')
+const db = require('./database');
+const Redis = require('ioredis');
+
+const redis = new Redis({
+    host: 'localhost',
+    port: 6379,
+});
 
 const addBlog = async(request, h) => {
     const { title, content, category, tags } = request.payload;
@@ -99,11 +105,24 @@ const getBlogById = async(request, h) => {
     const { id } = request.params;
 
     try {
+        const cacheKey = `id:${id}`;
+        const cachedData = await redis.get(cacheKey);
+
+        if(cachedData) {
+            const response = h.response({
+                status: 'success',
+                result: JSON.parse(cachedData).map(({ title, content, category, tags }) => ({ title, content, category, tags}))
+            });
+            response.code(200);
+            return response;
+        };
+
         const [existBlog] = await db.query(`SELECT title, content, category, tags FROM blog WHERE id = ?`, [id]);
 
         existBlog[0].tags = JSON.parse(existBlog[0].tags);
 
         if(existBlog.length > 0) {
+            await redis.set(cacheKey, JSON.stringify(existBlog), 'EX', 600);
             const response = h.response({
                 status: 'success',
                 result: existBlog,
